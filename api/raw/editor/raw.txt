@@ -1,0 +1,157 @@
+package editor // import "kaijuengine.com/editor"
+
+
+CONSTANTS
+
+const EditorVersion float64 = 0.0016
+
+FUNCTIONS
+
+func CreateNewProjectFromCLI(path string)
+func RegisterPlugin(key string, plugin editor_plugin.EditorPlugin)
+
+TYPES
+
+type Editor struct {
+	// Has unexported fields.
+}
+    Editor is the entry point structure for the entire editor. It acts as the
+    delegate to the various systems and holds the primary members that make up
+    the bulk of the editor identity.
+
+    The design goal of the editor is different than that of the engine.Host,
+    as it is not intended to be passed around for access to the system. Instead
+    it will supply interface functions that are needed to the systems that it
+    holds internally.
+
+func (ed *Editor) ApplyWorkspaceConfigChanges()
+    ApplyWorkspaceConfigChanges is called by the settings workspace after the
+    user toggles enable/visible or reorders a workspace. Re-runs reconciliation
+    (which may shut down workspaces that are now disabled, initialize newly-
+    enabled ones), rebuilds the menu bar tab strip, and switches the active
+    workspace if the current one has been disabled.
+
+func (ed *Editor) BlurInterface()
+    FocusInterface is responsible for disabling the input on the various
+    interfaces that are currently presented to the developer. This primarily
+    includes the menu bar, status bar, and whichever workspace is active.
+
+func (ed *Editor) Build(buildMode project.GameBuildMode)
+
+func (ed *Editor) BuildAndRun(buildMode project.GameBuildMode)
+
+func (ed *Editor) BuildAndRunCurrentStage()
+
+func (ed *Editor) Cache() *content_database.Cache
+
+func (ed *Editor) ConnectSelectedAsDistanceChain()
+
+func (ed *Editor) ConnectSelectedAsHingeChain()
+
+func (ed *Editor) ConnectSelectedAsRope()
+
+func (ed *Editor) ContentPreviewer() *content_previews.ContentPreviewer
+
+func (ed *Editor) CreateCssStylesheetFile(name string)
+
+func (ed *Editor) CreateHtmlUiFile(name string)
+
+func (ed *Editor) CreateNewCamera()
+
+func (ed *Editor) CreateNewEntity()
+
+func (ed *Editor) CreateNewLight()
+
+func (ed *Editor) CreateNewStage()
+
+func (ed *Editor) CreatePluginProject(path string)
+
+func (ed *Editor) CreatePrimitive(primitive rendering.PrimitiveMesh)
+
+func (ed *Editor) Events() *editor_events.EditorEvents
+
+func (ed *Editor) FileDropRouter() *FileDropRouter
+
+func (ed *Editor) FocusInterface()
+    FocusInterface is responsible for enabling the input on the various
+    interfaces that are currently presented to the developer. This primarily
+    includes the menu bar, status bar, and whichever workspace is active.
+
+func (ed *Editor) History() *memento.History
+
+func (ed *Editor) Host() *engine.Host
+
+func (ed *Editor) IsInputFocused() bool
+
+func (ed *Editor) OpenCodeEditor()
+    OpenCodeEditor will run a command specified in CodeEditor settings entry
+    directly to the project top level folder. This is an exposed function to
+    meet the interface needs of menu_bar.MenuBarHandler. func (ed *Editor)
+    OpenVSCodeProject() {
+
+func (ed *Editor) Project() *project.Project
+
+func (ed *Editor) ProjectFileSystem() *project_file_system.FileSystem
+
+func (ed *Editor) RecompileWithPlugins(plugins []editor_plugin.PluginInfo, onComplete func(err error)) error
+
+func (ed *Editor) SaveCurrentStage()
+    SaveCurrentStage will save the currently open stage file. This is an exposed
+    function to meet the interface needs of menu_bar.MenuBarHandler.
+
+func (ed *Editor) SaveCurrentStageWithCallback(cb func(bool))
+
+func (ed *Editor) SelectWorkspace(id string) error
+    SelectWorkspace switches the active workspace to the one identified by id.
+    Errors out if the id is unknown to the active workspace set (e.g. workspace
+    is disabled or never registered).
+
+func (ed *Editor) SetGridVisible(visible bool)
+    SetGridVisible records the developer's preference for the editor viewport
+    grid, persists it to the global editor settings, and applies the change to
+    the live stage view if one is initialized.
+
+func (ed *Editor) Settings() *editor_settings.Settings
+
+func (ed *Editor) ShowReferences(id string)
+    ShowReferences opens the references viewer overlay for the given content id.
+    This sits on the editor (not on a workspace) because the overlay is a
+    chrome-level surface, not part of any workspace's UI document.
+
+func (ed *Editor) StageView() *editor_stage_view.StageView
+
+func (ed *Editor) StageWorkspace() *stage_workspace.StageWorkspace
+
+func (ed *Editor) UpdateSettings()
+
+func (ed *Editor) Workspace(id string) (editor_workspace.Workspace, bool)
+    Workspace returns the live instance for a given id. Used by callers that
+    need a typed-service interface from another workspace via type assertion.
+
+func (ed *Editor) WorkspaceSelected(id string)
+    WorkspaceSelected switches the active workspace to the one with the given
+    id. Called by the menu bar when the user clicks a tab and by plugins via
+    editor_workspace.WorkspaceEditorInterface.SelectWorkspace.
+
+func (ed *Editor) Workspaces() []editor_workspace.Workspace
+    Workspaces returns the set of currently active (enabled) workspaces in load
+    order. Excludes disabled workspaces; includes hidden ones (Visible=false).
+
+type EditorGame struct{}
+    EditorGame satisfies [bootstrap.GameInterface] and will allow the engine to
+    bootstrap the editor (as it would a game).
+
+func (EditorGame) ContentDatabase() (assets.Database, error)
+
+func (EditorGame) Launch(host *engine.Host)
+
+func (EditorGame) PluginRegistry() []reflect.Type
+
+type FileDropRouter struct{}
+
+type WorkspaceState = string
+    WorkspaceState is the id of the currently active workspace. Empty string
+    means "none active". The set of valid values is determined at runtime by
+    what's in the workspace registry, not by a hard-coded enum.
+
+const WorkspaceStateNone WorkspaceState = ""
