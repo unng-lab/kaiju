@@ -227,6 +227,9 @@ func (Mesh) PostImportProcessing(proc ProcessedImport, res *ImportResult, fs *pr
 	}
 	matchTexture := func(srcPath string) rendering.MaterialTextureData {
 		for i := range res.Dependencies {
+			if srcPath == res.Dependencies[i].Id {
+				return rendering.MaterialTextureData{Texture: res.Dependencies[i].Id, Filter: "Linear"}
+			}
 			cc, err := cache.Read(res.Dependencies[i].Id)
 			if err != nil {
 				continue

@@ -81,7 +81,10 @@ func (c *SkinAnimationEntityDataRenderer) Update(host *engine.Host, target *edit
 		name := data.FieldValueByName("AnimName").(string)
 		skin := target.StageData.ShaderData.SkinningHeader()
 		if skin != nil {
+			g.skin = weak.Make(skin)
 			if g.meshId != meshId {
+				g.anim = framework.SkinAnimation{}
+				g.animations = nil
 				c.bindSkin(host, target, data)
 			}
 			if !strings.EqualFold(g.animName, name) {
@@ -104,9 +107,11 @@ func (c *SkinAnimationEntityDataRenderer) bindSkin(host *engine.Host, target *ed
 	if skin == nil {
 		return
 	}
-	meshId := string(data.FieldValueByName("MeshId").(content_id.Mesh))
 	g := c.Skins[target]
-	if len(g.animations) == 0 {
+	g.skin = weak.Make(skin)
+	meshId := string(data.FieldValueByName("MeshId").(content_id.Mesh))
+	meshChanged := g.meshId != meshId
+	if meshChanged || len(g.animations) == 0 {
 		if !host.AssetDatabase().Exists(meshId) {
 			return
 		}
@@ -121,7 +126,7 @@ func (c *SkinAnimationEntityDataRenderer) bindSkin(host *engine.Host, target *ed
 		ids := klib.ExtractFromSlice(km.Joints, func(i int) int32 {
 			return km.Joints[i].Id
 		})
-		if !skin.HasBones() {
+		if meshChanged || !skin.HasBones() {
 			skin.CreateBones(ids)
 			for i := range km.Joints {
 				j := &km.Joints[i]
@@ -145,6 +150,7 @@ func (c *SkinAnimationEntityDataRenderer) bindSkin(host *engine.Host, target *ed
 			}
 		}
 		g.animations = km.Animations
+		g.meshId = meshId
 	}
 	if len(g.animations) > 0 {
 		if g.animName == "" {

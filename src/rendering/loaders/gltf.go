@@ -93,6 +93,30 @@ func readFileGLB(file string, assetDB assets.Database) (fullGLTF, error) {
 		g.bins[i] = bins[:buffer.ByteLength]
 		bins = bins[buffer.ByteLength:]
 	}
+	if err = gltfReadEmbeddedTextures(&g); err != nil {
+		return g, err
+	}
+	return g, nil
+}
+
+func gltfDecodeDataURI(uri string) ([]byte, bool, error) {
+	if !strings.HasPrefix(uri, "data:") {
+		return nil, false, nil
+	}
+	comma := strings.Index(uri, ",")
+	if comma == -1 {
+		return nil, true, errors.New("invalid data URI")
+	}
+	metadata := uri[:comma]
+	data := uri[comma+1:]
+	if !strings.Contains(metadata, ";base64") {
+		return []byte(data), true, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	return decoded, true, err
+}
+
+func gltfReadEmbeddedTextures(g *fullGLTF) error {
 	g.textures = make(map[int32][]byte)
 	for i := range g.glTF.Images {
 		img := &g.glTF.Images[i]
@@ -101,22 +125,16 @@ func readFileGLB(file string, assetDB assets.Database) (fullGLTF, error) {
 			bin := g.bins[view.Buffer]
 			end := view.ByteOffset + view.ByteLength
 			if end > int32(len(bin)) {
-				return g, fmt.Errorf("image %d bufferView exceeds buffer bounds", i)
+				return fmt.Errorf("image %d bufferView exceeds buffer bounds", i)
 			}
 			g.textures[int32(i)] = bin[view.ByteOffset:end]
-		} else if strings.HasPrefix(img.URI, "data:") {
-			comma := strings.Index(img.URI, ",")
-			if comma == -1 {
-				continue
-			}
-			b64 := img.URI[comma+1:]
-			decoded, err := base64.StdEncoding.DecodeString(b64)
-			if err == nil {
-				g.textures[int32(i)] = decoded
-			}
+		} else if decoded, ok, err := gltfDecodeDataURI(img.URI); err != nil {
+			return fmt.Errorf("failed to decode image %d data URI: %w", i, err)
+		} else if ok {
+			g.textures[int32(i)] = decoded
 		}
 	}
-	return g, nil
+	return nil
 }
 
 func readFileGLTF(file string, assetDB assets.Database) (fullGLTF, error) {
@@ -135,6 +153,12 @@ func readFileGLTF(file string, assetDB assets.Database) (fullGLTF, error) {
 	g.textures = make(map[int32][]byte)
 	root := filepath.Dir(file)
 	for i, path := range g.glTF.Buffers {
+		if decoded, ok, err := gltfDecodeDataURI(path.URI); err != nil {
+			return g, fmt.Errorf("failed to decode buffer %d data URI: %w", i, err)
+		} else if ok {
+			g.bins[i] = decoded
+			continue
+		}
 		uri := filepath.Join(root, path.URI)
 		if !assetDB.Exists(uri) {
 			return g, errors.New("bin file (" + uri + ") does not exist")
@@ -143,6 +167,9 @@ func readFileGLTF(file string, assetDB assets.Database) (fullGLTF, error) {
 		if err != nil {
 			return g, err
 		}
+	}
+	if err = gltfReadEmbeddedTextures(&g); err != nil {
+		return g, err
 	}
 	return g, nil
 }

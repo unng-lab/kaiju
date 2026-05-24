@@ -30,6 +30,7 @@ import (
 	"kaijuengine.com/engine_entity_data/engine_entity_data_light"
 	"kaijuengine.com/engine_entity_data/engine_entity_data_particles"
 	"kaijuengine.com/engine_entity_data/engine_entity_data_physics"
+	"kaijuengine.com/engine_entity_data/engine_entity_data_skin_animation"
 	"kaijuengine.com/engine_entity_data/engine_entity_data_terrain"
 	"kaijuengine.com/platform/filesystem"
 	"kaijuengine.com/platform/profiler/tracing"
@@ -429,17 +430,26 @@ func (p *Project) ReadSourceCode() {
 	p.entityData = p.entityData[:0]
 	p.entityDataMap = make(map[string]*codegen.GeneratedType)
 	slog.Info("reading through project code to find bindable data")
-	kaijuRoot, err := os.OpenRoot(filepath.Join(p.fileSystem.Name(), "kaiju"))
+	kaijuSrcPath := filepath.Join(p.fileSystem.Name(), "kaiju/src")
+	if _, err := os.Stat(kaijuSrcPath); err != nil {
+		kaijuSrcPath = filepath.Join(p.fileSystem.Name(), "kaiju")
+	}
+	kaijuRoot, err := os.OpenRoot(kaijuSrcPath)
 	if err != nil {
 		slog.Error("failed to read the kaiju source code folder for the project", "error", err)
 		return
 	}
 	defer kaijuRoot.Close()
 
-	kaijuBindings, err := os.OpenRoot(filepath.Join(p.fileSystem.Name(), "kaiju/engine_entity_data"))
+	kaijuBindingsPath := filepath.Join(kaijuSrcPath, "engine_entity_data")
+	kaijuBindings, err := os.OpenRoot(kaijuBindingsPath)
 	if err != nil {
-		slog.Error("failed to read the kaiju engine entity data folder for the project", "error", err)
-		return
+		kaijuBindingsPath = filepath.Join(p.fileSystem.Name(), "kaiju/engine_entity_data")
+		kaijuBindings, err = os.OpenRoot(kaijuBindingsPath)
+		if err != nil {
+			slog.Error("failed to read the kaiju engine entity data folder for the project", "error", err)
+			return
+		}
 	}
 	defer kaijuBindings.Close()
 
@@ -461,6 +471,7 @@ func (p *Project) ensureBuiltInEntityDataBindings() {
 		codegen.GeneratedTypeFromValue(engine_entity_data_light.BindingKey(), engine_entity_data_light.LightEntityData{}),
 		codegen.GeneratedTypeFromValue(engine_entity_data_particles.BindingKey(), engine_entity_data_particles.ParticleSystemEntityData{}),
 		codegen.GeneratedTypeFromValue(engine_entity_data_physics.BindingKey(), engine_entity_data_physics.RigidBodyEntityData{}),
+		codegen.GeneratedTypeFromValue(engine_entity_data_skin_animation.BindingKey(), engine_entity_data_skin_animation.SkinAnimationEntityData{}),
 		codegen.GeneratedTypeFromValue(engine_entity_data_terrain.BindingKey(), engine_entity_data_terrain.TerrainEntityData{}),
 	}
 	for i := range builtIns {

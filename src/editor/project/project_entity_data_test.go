@@ -10,14 +10,16 @@ import (
 	"testing"
 
 	"kaijuengine.com/engine_entity_data/engine_entity_data_physics"
+	"kaijuengine.com/engine_entity_data/engine_entity_data_skin_animation"
 	"kaijuengine.com/engine_entity_data/engine_entity_data_terrain"
 )
 
-func TestEnsureBuiltInEntityDataBindingsIncludesTerrainAndPhysics(t *testing.T) {
+func TestEnsureBuiltInEntityDataBindingsIncludesFallbackBindings(t *testing.T) {
 	p := Project{}
 	p.ensureBuiltInEntityDataBindings()
 
 	terrainCount := 0
+	skinAnimationCount := 0
 	for i := range p.entityData {
 		if p.entityData[i].RegisterKey == engine_entity_data_terrain.BindingKey() {
 			terrainCount++
@@ -29,9 +31,22 @@ func TestEnsureBuiltInEntityDataBindingsIncludesTerrainAndPhysics(t *testing.T) 
 					len(p.entityData[i].Fields), len(p.entityData[i].FieldGens))
 			}
 		}
+		if p.entityData[i].RegisterKey == engine_entity_data_skin_animation.BindingKey() {
+			skinAnimationCount++
+			if len(p.entityData[i].Fields) == 0 {
+				t.Fatal("expected skin animation fallback binding to include fields")
+			}
+			if len(p.entityData[i].FieldGens) != len(p.entityData[i].Fields) {
+				t.Fatalf("expected skin animation field gen count %d, got %d",
+					len(p.entityData[i].Fields), len(p.entityData[i].FieldGens))
+			}
+		}
 	}
 	if terrainCount != 1 {
 		t.Fatalf("expected one terrain binding, got %d", terrainCount)
+	}
+	if skinAnimationCount != 1 {
+		t.Fatalf("expected one skin animation binding, got %d", skinAnimationCount)
 	}
 	physicsCount := 0
 	for i := range p.entityData {
@@ -53,6 +68,7 @@ func TestEnsureBuiltInEntityDataBindingsIncludesTerrainAndPhysics(t *testing.T) 
 	p.ensureBuiltInEntityDataBindings()
 	terrainCount = 0
 	physicsCount = 0
+	skinAnimationCount = 0
 	for i := range p.entityData {
 		if p.entityData[i].RegisterKey == engine_entity_data_terrain.BindingKey() {
 			terrainCount++
@@ -60,11 +76,17 @@ func TestEnsureBuiltInEntityDataBindingsIncludesTerrainAndPhysics(t *testing.T) 
 		if p.entityData[i].RegisterKey == engine_entity_data_physics.BindingKey() {
 			physicsCount++
 		}
+		if p.entityData[i].RegisterKey == engine_entity_data_skin_animation.BindingKey() {
+			skinAnimationCount++
+		}
 	}
 	if terrainCount != 1 {
 		t.Fatalf("expected repeated ensure to keep one terrain binding, got %d", terrainCount)
 	}
 	if physicsCount != 1 {
 		t.Fatalf("expected repeated ensure to keep one physics binding, got %d", physicsCount)
+	}
+	if skinAnimationCount != 1 {
+		t.Fatalf("expected repeated ensure to keep one skin animation binding, got %d", skinAnimationCount)
 	}
 }
