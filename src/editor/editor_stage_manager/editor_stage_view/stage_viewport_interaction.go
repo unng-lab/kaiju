@@ -8,21 +8,20 @@ package editor_stage_view
 
 import (
 	"kaijuengine.com/editor/editor_controls"
+	"kaijuengine.com/editor/editor_stage_manager"
 	"kaijuengine.com/editor/editor_stage_manager/editor_stage_view/transform_tools"
 	"kaijuengine.com/editor/project"
 	"kaijuengine.com/platform/hid"
 	"kaijuengine.com/platform/profiler/tracing"
 )
 
-const menuBarHeightArea = 30
-
 func (v *StageView) processViewportInteractions(proj *project.Project) {
 	defer tracing.NewRegion("StageWorkspace.processViewportInteractions").End()
 	m := &v.host.Window.Mouse
 	kb := &v.host.Window.Keyboard
-	// TODO:  This is to prevent deselecting and box selection if the mouse was
-	// over the menu bar area. Probably should do this check in a better way
-	if m.ScreenPosition().Y() <= menuBarHeightArea {
+	insideViewport := v.viewportContainsScreenPosition(m.ScreenPosition())
+	if !insideViewport && !v.selectTool.IsActive() && !v.transformTool.IsActive() &&
+		!v.transformMan.IsBusy() && !v.vertexSnap.IsBusy() {
 		return
 	}
 	if v.toolOwner != nil && v.toolOwner.UpdateViewportTool(v) {
@@ -38,12 +37,17 @@ func (v *StageView) processViewportInteractions(proj *project.Project) {
 	if v.transformMan.IsBusy() {
 		return
 	}
-	v.selectTool.Update()
-	if m.Pressed(hid.MouseButtonLeft) {
-		ray := v.camera.RayCast(m)
-		if kb.HasShift() {
+	boxSelected := v.selectTool.Update()
+	if m.Released(hid.MouseButtonLeft) && !boxSelected {
+		ray := v.activeCamera().RayCast(m)
+		mode := stageSelectionMode(kb)
+		point := v.ViewportMousePosition(m)
+		if v.stagePicking.RequestClick(point, mode, ray) {
+			return
+		}
+		if mode == editor_stage_manager.SelectionModeAppend {
 			v.manager.TryAppendSelect(ray)
-		} else if kb.HasCtrlOrMeta() {
+		} else if mode == editor_stage_manager.SelectionModeToggle {
 			v.manager.TryToggleSelect(ray)
 		} else {
 			v.manager.TrySelect(ray)
@@ -51,7 +55,7 @@ func (v *StageView) processViewportInteractions(proj *project.Project) {
 	}
 	if kb.KeyDown(hid.KeyboardKeyF) {
 		if v.manager.HasSelection() {
-			v.camera.Focus(v.manager.SelectionBounds())
+			v.activeCamera().Focus(v.manager.SelectionBounds())
 		}
 	} else if kb.KeyDown(hid.KeyboardKey1) {
 		v.transformTool.Enable(transform_tools.ToolStateMove)
@@ -63,5 +67,5 @@ func (v *StageView) processViewportInteractions(proj *project.Project) {
 }
 
 func (v *StageView) isCamera3D() bool {
-	return v.camera.Mode() == editor_controls.EditorCameraMode3d
+	return v.activeCamera().Mode() == editor_controls.EditorCameraMode3d
 }

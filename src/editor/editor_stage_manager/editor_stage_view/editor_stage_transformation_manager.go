@@ -54,9 +54,9 @@ func (t *TransformationManager) Initialize(stageView *StageView, history *mement
 	t.view = weak.Make(stageView)
 	t.settings = settings
 	t.snapSettings = &settings.Snapping
-	t.translateTool.Initialize(stageView.host)
-	t.rotationTool.Initialize(stageView.host)
-	t.scalingTool.Initialize(stageView.host)
+	t.translateTool.Initialize(stageView.host, stageView)
+	t.rotationTool.Initialize(stageView.host, stageView)
+	t.scalingTool.Initialize(stageView.host, stageView)
 	t.manager = &stageView.manager
 	t.history = history
 	t.manager.OnEntitySelected.Add(func(e *editor_stage_manager.StageEntity) {
@@ -86,6 +86,22 @@ func (t *TransformationManager) cameraModeChanged(mode editor_controls.EditorCam
 	t.translateTool.SetDimensions(mode)
 	t.rotationTool.SetDimensions(mode)
 	t.scalingTool.SetDimensions(mode)
+}
+
+func (t *TransformationManager) RefreshToolVisibility() {
+	pos := matrix.Vec3NaN()
+	hasSelection := t.manager != nil && t.manager.HasSelection()
+	if hasSelection {
+		pos = t.manager.LastSelected().Transform.Position()
+	}
+	t.refreshToolVisibilityAt(hasSelection, pos)
+}
+
+func (t *TransformationManager) refreshToolVisibilityAt(hasSelection bool, pos matrix.Vec3) {
+	if !hasSelection {
+		pos = matrix.Vec3NaN()
+	}
+	t.showToolState(t.currentTool, pos)
 }
 
 func (t *TransformationManager) Update(host *engine.Host, proj *project.Project) {

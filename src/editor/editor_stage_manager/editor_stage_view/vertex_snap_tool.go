@@ -106,7 +106,7 @@ func (t *VertexSnapTool) pickSource(host *engine.Host) (vertexSnapCandidate, boo
 	if !manager.HasSelection() {
 		return vertexSnapCandidate{}, false
 	}
-	return closestSnapVertexOnEntity(manager.LastSelected(), host.Window.Cursor.Position(),
+	return closestSnapVertexOnEntity(manager.LastSelected(), t.view.ViewportCursorScreenPosition(&host.Window.Cursor),
 		host.PrimaryCamera().View(), host.PrimaryCamera().Projection(), host.PrimaryCamera().Viewport(),
 		vertexSnapPickRadiusPixels)
 }
@@ -121,9 +121,9 @@ func (t *VertexSnapTool) beginDrag(host *engine.Host, source vertexSnapCandidate
 
 func (t *VertexSnapTool) updateDrag(host *engine.Host) {
 	cam := host.PrimaryCamera()
-	mouse := host.Window.Cursor.Position()
+	mouse := t.view.ViewportCursorPosition(editor_controls.EditorCameraMode3d, &host.Window.Cursor)
 	delta := matrix.Vec3Zero()
-	target, hasTarget := t.pickTarget(host, mouse)
+	target, hasTarget := t.pickTarget(host)
 	if hasTarget {
 		delta = target.World.Subtract(t.sourceStartWorld)
 		t.targetMarker.Show(target.World, vertexSnapMarkerWorldScale(cam, target.World))
@@ -138,11 +138,12 @@ func (t *VertexSnapTool) updateDrag(host *engine.Host) {
 	t.sourceMarker.Show(sourceWorld, vertexSnapMarkerWorldScale(cam, sourceWorld))
 }
 
-func (t *VertexSnapTool) pickTarget(host *engine.Host, mouse matrix.Vec2) (vertexSnapCandidate, bool) {
+func (t *VertexSnapTool) pickTarget(host *engine.Host) (vertexSnapCandidate, bool) {
 	manager := t.transformManager.manager
 	selection := manager.HierarchyRespectiveSelection()
 	targets := manager.VertexSnapTargetEntities(selection)
 	cam := host.PrimaryCamera()
+	mouse := t.view.ViewportCursorScreenPosition(&host.Window.Cursor)
 	return closestSnapVertexOnEntities(targets, mouse, cam.View(), cam.Projection(),
 		cam.Viewport(), vertexSnapPickRadiusPixels)
 }
@@ -190,6 +191,7 @@ func (m *vertexSnapMarker) Initialize(host *engine.Host, color matrix.Color) {
 		Mesh:       mesh,
 		ShaderData: m.shaderData,
 		Transform:  &m.transform,
+		Layer:      rendering.RenderLayerEditor,
 		ViewCuller: &host.Cameras.Primary,
 	})
 	m.Hide()
@@ -255,7 +257,6 @@ func closestSnapVertexOnEntity(e *editor_stage_manager.StageEntity, mouse matrix
 		if !ok {
 			continue
 		}
-		screen = vertexSnapToCursorScreenSpace(screen, viewport)
 		dx := screen.X() - mouse.X()
 		dy := screen.Y() - mouse.Y()
 		distSq := dx*dx + dy*dy
@@ -273,11 +274,6 @@ func closestSnapVertexOnEntity(e *editor_stage_manager.StageEntity, mouse matrix
 		found = true
 	}
 	return best, found
-}
-
-func vertexSnapToCursorScreenSpace(screen matrix.Vec3, viewport matrix.Vec4) matrix.Vec3 {
-	screen.SetY(viewport.Y() + viewport.W() - (screen.Y() - viewport.Y()))
-	return screen
 }
 
 func applyVertexSnapDelta(memento *transformHistory, delta matrix.Vec3) {
