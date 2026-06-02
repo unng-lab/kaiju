@@ -402,7 +402,7 @@ var {
 	font-style: italic;
 }
 button, .button {
-	padding: 2px 5px 2px 5px;
+	padding: 0 5px 2px 5px;
 	font-size: 16px;
 	text-align: center;
 	vertical-align: middle;
@@ -420,6 +420,7 @@ button:hover, .button:hover {
 	background-position: 0 64px; */
 }
 button:active, .button:active {
+	padding: 2px 5px 0 5px;
 	background-color: rgb(59, 59, 59);
 	/* background-image: url("input_atlas.png");
 	background-position: 64px 0; */
@@ -437,6 +438,7 @@ button.primary:hover, .button.primary:hover {
 :root {
 	--ed-menu-bar-height: 24px;
 	--ed-status-bar-height: 1.3em;
+	--ed-row-selected: #682A2D;
 }
 input[type="text"] {
 	color: white;
@@ -462,14 +464,10 @@ textarea:focus {
 	border: 2px solid #363636;
 }
 .filterBtn {
-	padding: 2px 5px;
+	width: 100%;
 	background-color: #1C1C1C;
-	border: 2px solid #292C34;
-	border-radius: 12px;
 	color: #AAA;
 	font-size: 1em;
-	margin-right: 0.5em;
-	margin-bottom: 0.25em;
 }
 .filterBtn:hover {
 	color: white;
@@ -486,12 +484,11 @@ textarea:focus {
 	background-color: #1D731C;
 	margin-right: 5px;
 }
-.filterBtn .selected {
-	background-color: #682A2D;
-	border-color: #881E1E;
+.filterBtn.selected {
+	background-color: var(--ed-row-selected);
 	color: white;
 }
-.filterBtn .inverted {
+.filterBtn.inverted {
 	background-color: #0e0f12;
 	border: 2px solid #121317;
 	color: #999;

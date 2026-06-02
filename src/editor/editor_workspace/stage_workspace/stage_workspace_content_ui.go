@@ -17,11 +17,10 @@ import (
 	"kaijuengine.com/editor/editor_overlay/context_menu"
 	"kaijuengine.com/editor/editor_workspace/content_workspace"
 	"kaijuengine.com/editor/project/project_database/content_database"
-	"kaijuengine.com/engine"
+	"kaijuengine.com/engine/ui"
 	"kaijuengine.com/engine/ui/markup/document"
 	"kaijuengine.com/klib"
 	"kaijuengine.com/matrix"
-	"kaijuengine.com/platform/hid"
 	"kaijuengine.com/platform/profiler/tracing"
 	"kaijuengine.com/platform/windowing"
 	"kaijuengine.com/rendering"
@@ -29,6 +28,7 @@ import (
 
 type WorkspaceContentUI struct {
 	workspace          weak.Pointer[StageWorkspace]
+	doc                *document.Document
 	typeFilters        klib.Set[string]
 	typeFiltersDisable klib.Set[string]
 	tagFilters         klib.Set[string]
@@ -40,7 +40,8 @@ type WorkspaceContentUI struct {
 	dragPreview        *document.Element
 	entryTemplate      *document.Element
 	dragging           *document.Element
-	tooltip            *document.Element
+	tooltipPanel       *ui.Panel
+	tooltipLabel       *ui.Label
 	dragContentId      string
 }
 
@@ -79,12 +80,13 @@ func (cui *WorkspaceContentUI) setup(w *StageWorkspace, edEvts *editor_events.Ed
 	cui.typeFiltersDisable = klib.NewSet[string]()
 	cui.tagFilters = klib.NewSet[string]()
 	cui.tagFiltersDisable = klib.NewSet[string]()
-	cui.contentArea, _ = w.Doc.GetElementById("contentArea")
-	cui.contentPreviewArea, _ = w.Doc.GetElementById("contentPreviewArea")
-	cui.filterArea, _ = w.Doc.GetElementById("filterArea")
-	cui.dragPreview, _ = w.Doc.GetElementById("dragPreview")
-	cui.entryTemplate, _ = w.Doc.GetElementById("entryTemplate")
-	cui.tooltip, _ = w.Doc.GetElementById("tooltip")
+	cui.doc = w.contentDoc
+	cui.contentArea, _ = cui.doc.GetElementById("contentArea")
+	cui.contentPreviewArea, _ = cui.doc.GetElementById("contentPreviewArea")
+	cui.filterArea, _ = cui.doc.GetElementById("filterArea")
+	cui.dragPreview, _ = cui.doc.GetElementById("dragPreview")
+	cui.entryTemplate, _ = cui.doc.GetElementById("entryTemplate")
+	cui.createTooltip()
 	edEvts.OnContentAdded.Add(cui.addContent)
 	edEvts.OnContentRemoved.Add(cui.removeContent)
 	edEvts.OnContentRenamed.Add(cui.renameContent)
@@ -97,22 +99,7 @@ func (cui *WorkspaceContentUI) open() {
 	defer tracing.NewRegion("WorkspaceContentUI.open").End()
 	cui.entryTemplate.UI.Hide()
 	cui.dragPreview.UI.Hide()
-	cui.tooltip.UI.Hide()
-}
-
-func (cui *WorkspaceContentUI) processHotkeys(host *engine.Host) {
-	defer tracing.NewRegion("WorkspaceContentUI.processHotkeys").End()
-	if host.Window.Keyboard.KeyDown(hid.KeyboardKeyC) {
-		if cui.contentArea.UI.Entity().IsActive() {
-			cui.contentArea.UI.Hide()
-			cui.workspace.Value().hierarchyUI.extendHeight()
-			cui.workspace.Value().detailsUI.extendHeight()
-		} else {
-			cui.contentArea.UI.Show()
-			cui.workspace.Value().hierarchyUI.standardHeight()
-			cui.workspace.Value().detailsUI.standardHeight()
-		}
-	}
+	cui.hideTooltip()
 }
 
 func (cui *WorkspaceContentUI) addContent(ids []string) {
@@ -124,7 +111,7 @@ func (cui *WorkspaceContentUI) addContent(ids []string) {
 	w.removeFtde()
 	ccAll := make([]content_database.CachedContent, 0, len(ids))
 	for i := range ids {
-		if _, ok := w.Doc.GetElementById(ids[i]); !ok {
+		if _, ok := cui.doc.GetElementById(ids[i]); !ok {
 			cc, err := w.ed.Cache().Read(ids[i])
 			if err != nil {
 				slog.Error("failed to read the cached content", "id", ids[i], "error", err)
@@ -133,11 +120,11 @@ func (cui *WorkspaceContentUI) addContent(ids []string) {
 			ccAll = append(ccAll, cc)
 		}
 	}
-	cpys := w.Doc.DuplicateElementRepeatWithoutApplyStyles(cui.entryTemplate, len(ccAll))
+	cpys := cui.doc.DuplicateElementRepeatWithoutApplyStyles(cui.entryTemplate, len(ccAll))
 	for i := range cpys {
 		cc := &ccAll[i]
 		cui.allowEntryVisualsClickThrough(cpys[i])
-		w.Doc.SetElementIdWithoutApplyStyles(cpys[i], cc.Id())
+		cui.doc.SetElementIdWithoutApplyStyles(cpys[i], cc.Id())
 		cpys[i].SetAttribute("data-type", strings.ToLower(cc.Config.Type))
 		lbl := cpys[i].Children[1].Children[0].UI.ToLabel()
 		lbl.SetText(cc.Config.Name)
@@ -149,7 +136,7 @@ func (cui *WorkspaceContentUI) addContent(ids []string) {
 			cpys[i].Children[2].UI.ToPanel().SetBackground(tex)
 		}
 	}
-	w.Doc.ApplyStyles()
+	cui.doc.ApplyStyles()
 	cui.refreshFilterOnContentChange()
 	w.ed.ContentPreviewer().GeneratePreviews(ids)
 }
@@ -170,8 +157,8 @@ func (cui *WorkspaceContentUI) removeContent(ids []string) {
 		return
 	}
 	for _, id := range ids {
-		if el, ok := w.Doc.GetElementById(id); ok {
-			w.Doc.RemoveElement(el)
+		if el, ok := cui.doc.GetElementById(id); ok {
+			cui.doc.RemoveElement(el)
 		} else {
 			slog.Error("failed to find element to remove", "id", id)
 		}
@@ -189,7 +176,7 @@ func (cui *WorkspaceContentUI) renameContent(id string) {
 		slog.Warn("failed to find the matching stage content", "id", id, "error", err)
 		return
 	}
-	if e, ok := w.Doc.GetElementById(id); ok {
+	if e, ok := cui.doc.GetElementById(id); ok {
 		e.Children[1].Children[0].UI.ToLabel().SetText(cc.Config.Name)
 	} else {
 		slog.Error("failed to find element to remove", "id", id)
@@ -199,7 +186,7 @@ func (cui *WorkspaceContentUI) renameContent(id string) {
 func (cui *WorkspaceContentUI) contentPreviewGenerated(id string) {
 	defer tracing.NewRegion("WorkspaceContentUI.contentPreviewGenerated").End()
 	w := cui.workspace.Value()
-	elm, ok := w.Doc.GetElementById(id)
+	elm, ok := cui.doc.GetElementById(id)
 	if !ok {
 		return
 	}
@@ -245,7 +232,7 @@ func (cui *WorkspaceContentUI) inputFilter(e *document.Element) {
 func (cui *WorkspaceContentUI) tagFilter(e *document.Element) {
 	defer tracing.NewRegion("WorkspaceContentUI.tagFilter").End()
 	q := strings.ToLower(e.UI.ToInput().Text())
-	tagElms := cui.workspace.Value().Doc.GetElementsByGroup("tag")[1:]
+	tagElms := cui.doc.GetElementsByGroup("tag")[1:]
 	for i := range tagElms {
 		tag := tagElms[i].Attribute("data-tag")
 		show := strings.Contains(strings.ToLower(tag), q)
@@ -260,7 +247,7 @@ func (cui *WorkspaceContentUI) tagFilter(e *document.Element) {
 func (cui *WorkspaceContentUI) runFilter() {
 	defer tracing.NewRegion("WorkspaceContentUI.runFilter").End()
 	w := cui.workspace.Value()
-	entries := w.Doc.GetElementsByGroup("entry")
+	entries := cui.doc.GetElementsByGroup("entry")
 	for i := range entries {
 		e := entries[i]
 		id := e.Attribute("id")
@@ -275,7 +262,7 @@ func (cui *WorkspaceContentUI) runFilter() {
 		}
 	}
 	w.contentUI.contentPreviewArea.UIPanel.ResetScroll()
-	w.Host.RunOnMainThread(w.Doc.Clean)
+	w.Host.RunOnMainThread(cui.doc.Clean)
 }
 
 func (cui *WorkspaceContentUI) clickFilter(e *document.Element) {
@@ -287,7 +274,6 @@ func (cui *WorkspaceContentUI) clickFilter(e *document.Element) {
 	} else {
 		isSelected = slices.Contains(e.ClassList(), "selected")
 	}
-	w := cui.workspace.Value()
 	isSelected = !isSelected
 	typeName := e.Attribute("data-type")
 	tagName := e.Attribute("data-tag")
@@ -312,10 +298,10 @@ func (cui *WorkspaceContentUI) clickFilter(e *document.Element) {
 		if inverted {
 			className = "inverted"
 		}
-		w.Doc.SetElementClasses(e, "filterBtn", className)
+		cui.doc.SetElementClasses(e, "filterBtn", className)
 		targetList.Add(name)
 	} else {
-		w.Doc.SetElementClasses(e, "filterBtn")
+		cui.doc.SetElementClasses(e, "filterBtn")
 		targetList.Remove(name)
 	}
 	// Remove it from inverse list in both cases intentionally
@@ -348,28 +334,37 @@ func (cui *WorkspaceContentUI) entryDragStart(e *document.Element) {
 
 func (cui *WorkspaceContentUI) entryMouseEnter(e *document.Element) {
 	defer tracing.NewRegion("ContentWorkspace.entryMouseEnter").End()
-	ui := cui.tooltip.UI
+	if context_menu.IsOpen() {
+		cui.hideTooltip()
+		return
+	}
 	id := e.Attribute("id")
 	cc, err := cui.workspace.Value().ed.Cache().Read(id)
 	if err != nil {
 		slog.Error("failed to find the config for the selected entry", "id", id, "error", err)
 		return
 	}
-	ui.Show()
-	lbl := cui.tooltip.Children[0].UI.ToLabel()
 	if len(cc.Config.Tags) == 0 {
-		lbl.SetText(fmt.Sprintf("Name: %s\nType: %s", cc.Config.Name, cc.Config.Type))
+		cui.showTooltip(fmt.Sprintf("Name: %s\nType: %s", cc.Config.Name, cc.Config.Type))
 	} else {
-		lbl.SetText(fmt.Sprintf("Name: %s\nType: %s\nTags: %s",
+		cui.showTooltip(fmt.Sprintf("Name: %s\nType: %s\nTags: %s",
 			cc.Config.Name, cc.Config.Type, strings.Join(cc.Config.Tags.ToSlice(), ",")))
 	}
 }
 
 func (cui *WorkspaceContentUI) entryMouseMove(e *document.Element) {
 	defer tracing.NewRegion("ContentWorkspace.entryMouseMove").End()
-	ui := cui.tooltip.UI
-	if !ui.Entity().IsActive() {
-		ui.Show()
+	if context_menu.IsOpen() {
+		cui.hideTooltip()
+		return
+	}
+	if cui.tooltipPanel == nil {
+		return
+	}
+	tooltipUI := cui.tooltipPanel.Base()
+	if !tooltipUI.Entity().IsActive() {
+		tooltipUI.Show()
+		tooltipUI.Clean()
 	}
 	host := cui.workspace.Value().Host
 	win := host.Window
@@ -379,7 +374,7 @@ func (cui *WorkspaceContentUI) entryMouseMove(e *document.Element) {
 	const statusBarYBuffer = 20
 	x := p.X() + xOffset
 	y := p.Y() + yOffset
-	ps := ui.Layout().PixelSize()
+	ps := tooltipUI.Layout().PixelSize()
 	if x+ps.Width() > matrix.Float(win.Width()) {
 		x = p.X() - ps.Width() - xOffset
 	}
@@ -389,14 +384,56 @@ func (cui *WorkspaceContentUI) entryMouseMove(e *document.Element) {
 	// Running on the main thread so it's up to date with the mouse position on
 	// the next frame. Maybe there's no need for this...
 	host.RunOnMainThread(func() {
-		ui.Layout().SetOffset(x, y)
+		tooltipUI.Layout().SetOffset(x, y)
 	})
 }
 
 func (cui *WorkspaceContentUI) entryMouseLeave(e *document.Element) {
 	defer tracing.NewRegion("ContentWorkspace.entryMouseLeave").End()
-	cui.tooltip.UI.Layout().SetOffset(-1000, -1000)
-	cui.tooltip.UI.Hide()
+	cui.hideTooltip()
+}
+
+func (cui *WorkspaceContentUI) createTooltip() {
+	defer tracing.NewRegion("WorkspaceContentUI.createTooltip").End()
+	w := cui.workspace.Value()
+	panel := w.UiMan.Add().ToPanel()
+	panel.Init(nil, ui.ElementTypePanel)
+	panel.SetColor(matrix.ColorRGBInt(0x28, 0x28, 0x28))
+	panel.SetBorderSize(2, 2, 2, 2)
+	panel.SetBorderStyle(ui.BorderStyleSolid, ui.BorderStyleSolid, ui.BorderStyleSolid, ui.BorderStyleSolid)
+	panel.SetBorderColor(matrix.ColorWhite(), matrix.ColorWhite(), matrix.ColorWhite(), matrix.ColorWhite())
+	panel.Base().Layout().SetPadding(5, 0, 5, 0)
+	panel.AllowClickThrough()
+	panel.Base().Layout().SetPositioning(ui.PositioningAbsolute)
+	panel.Base().Layout().SetZ(20)
+	panel.Base().Layout().SetOffset(-1000, -1000)
+
+	label := w.UiMan.Add().ToLabel()
+	label.Init("Tooltip...")
+	label.SetColor(matrix.ColorRGBInt(0xAA, 0xAA, 0xAA))
+	label.SetBGColor(panel.Color())
+	panel.AddChild(label.Base())
+
+	cui.tooltipPanel = panel
+	cui.tooltipLabel = label
+	cui.hideTooltip()
+}
+
+func (cui *WorkspaceContentUI) showTooltip(text string) {
+	if cui.tooltipPanel == nil || cui.tooltipLabel == nil {
+		return
+	}
+	cui.tooltipLabel.SetText(text)
+	tooltipUI := cui.tooltipPanel.Base()
+	tooltipUI.Show()
+	tooltipUI.Clean()
+}
+
+func (cui *WorkspaceContentUI) hideTooltip() {
+	if cui.tooltipPanel != nil {
+		cui.tooltipPanel.Base().Layout().SetOffset(-1000, -1000)
+		cui.tooltipPanel.Base().Hide()
+	}
 }
 
 func (cui *WorkspaceContentUI) dropContent() {
@@ -465,8 +502,8 @@ func (cui *WorkspaceContentUI) handleNewFilterTag(newTag string) {
 	w := cui.workspace.Value()
 	w.pageData.Tags[newTag]++
 
-	tagBtnElms := w.Doc.GetElementsByClass("filterBtn")[0]
-	newFilterBtn := w.Doc.DuplicateElement(tagBtnElms)
+	tagBtnElms := cui.doc.GetElementsByClass("filterBtn")[0]
+	newFilterBtn := cui.doc.DuplicateElement(tagBtnElms)
 
 	newFilterBtn.SetAttribute("data-tag", newTag)
 	newFilterBtn.SetAttribute("group", "tag")
@@ -479,10 +516,10 @@ func (cui *WorkspaceContentUI) handleTagNoLongerInUse(removedTag string) {
 	w := cui.workspace.Value()
 	delete(w.pageData.Tags, removedTag)
 
-	tagElms := w.Doc.GetElementsByClass("filterBtn")
+	tagElms := cui.doc.GetElementsByClass("filterBtn")
 	for _, elm := range tagElms {
 		if elm.Attribute("data-tag") == removedTag {
-			w.Doc.RemoveElement(elm)
+			cui.doc.RemoveElement(elm)
 			break
 		}
 	}

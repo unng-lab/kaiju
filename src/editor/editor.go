@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"kaijuengine.com/build"
+	"kaijuengine.com/editor/editor_action"
 	"kaijuengine.com/editor/editor_embedded_content"
 	"kaijuengine.com/editor/editor_events"
 	"kaijuengine.com/editor/editor_logging"
@@ -25,12 +26,14 @@ import (
 	"kaijuengine.com/editor/memento"
 	"kaijuengine.com/editor/project"
 	"kaijuengine.com/editor/project/project_database/content_previews"
+	"kaijuengine.com/editor/webapi"
 	"kaijuengine.com/engine"
 	"kaijuengine.com/engine/systems/events"
 	"kaijuengine.com/engine/ui"
 	"kaijuengine.com/klib"
 	"kaijuengine.com/matrix"
 	"kaijuengine.com/platform/hid"
+	platformPower "kaijuengine.com/platform/power"
 	"kaijuengine.com/platform/profiler/tracing"
 	"kaijuengine.com/rendering"
 
@@ -78,7 +81,14 @@ type Editor struct {
 	}
 	contentPreviewer content_previews.ContentPreviewer
 	updateId         engine.UpdateId
+	webAPIServer     *webapi.Server[*Editor]
+	actions          *editor_action.Service
 	blurred          bool
+	actionPaletteKey struct {
+		pending bool
+		moved   bool
+	}
+	power powerState
 	// sessionDisabledPlugins holds module paths of plugins the user chose
 	// to skip via the startup-validation modal's "Continue" button (only
 	// MISSING plugins are recorded here — stale plugins are not tracked,
@@ -93,6 +103,17 @@ type Editor struct {
 type globalUI struct {
 	menuBar   menu_bar.MenuBar
 	statusBar status_bar.StatusBar
+}
+
+const editorPowerPollInterval = 5.0
+
+type powerStatusQuery func() (platformPower.Status, error)
+
+type powerState struct {
+	query       powerStatusQuery
+	lastStatus  platformPower.Status
+	initialized bool
+	pollElapsed float64
 }
 
 func (ed *Editor) Host() *engine.Host { return ed.host }
@@ -152,15 +173,53 @@ func (ed *Editor) earlyLoadUI() {
 }
 
 func (ed *Editor) UpdateSettings() {
-	ed.host.SetFrameRateLimit(int64(klib.Clamp(ed.settings.RefreshRate, 0, 320)))
+	ed.setFrameRateLimitForPowerStatus(ed.queryAndCachePowerStatus())
 	if matrix.Approx(ed.settings.UIScrollSpeed, 0) {
 		ed.settings.UIScrollSpeed = 1
 	}
+	ed.settings.NormalizeWebAPI()
 	ui.UIScrollSpeed = ed.settings.UIScrollSpeed
 	if err := ed.settings.Save(); err != nil {
 		slog.Error("failed to save the editor settings", "error", err)
 		return
 	}
+	ed.updateWebAPI()
+}
+
+func (ed *Editor) queryAndCachePowerStatus() platformPower.Status {
+	status := ed.queryPowerStatus()
+	ed.power.lastStatus = status
+	ed.power.initialized = true
+	ed.power.pollElapsed = 0
+	return status
+}
+
+func (ed *Editor) queryPowerStatus() platformPower.Status {
+	query := ed.power.query
+	if query == nil {
+		query = platformPower.Query
+	}
+	status, err := query()
+	if err != nil {
+		slog.Debug("failed to query power status", "error", err)
+		return platformPower.Status{Source: platformPower.SourceUnknown, BatteryPercent: -1}
+	}
+	return status
+}
+
+func (ed *Editor) setFrameRateLimitForPowerStatus(status platformPower.Status) {
+	if ed.host == nil {
+		return
+	}
+	ed.host.SetFrameRateLimit(int64(ed.effectiveRefreshRate(status)))
+}
+
+func (ed *Editor) effectiveRefreshRate(status platformPower.Status) int32 {
+	refreshRate := ed.settings.RefreshRate
+	if ed.settings.UseBatteryRefreshRate && status.OnBattery() {
+		refreshRate = ed.settings.BatteryRefreshRate
+	}
+	return klib.Clamp(refreshRate, 0, 320)
 }
 
 func (ed *Editor) postProjectLoad() {
@@ -324,6 +383,7 @@ func (ed *Editor) reconcileWorkspaces() bool {
 		ed.workspaceOrder = newOrder
 		changed = true
 	}
+	ed.registerRegisteredWorkspaceActions()
 	return changed
 }
 
@@ -406,6 +466,7 @@ func sliceEqual(a, b []string) bool {
 }
 
 func (ed *Editor) update(deltaTime float64) {
+	ed.updatePowerState(deltaTime)
 	if ed.blurred {
 		return
 	}
@@ -416,39 +477,40 @@ func (ed *Editor) update(deltaTime float64) {
 		return
 	}
 	kb := &ed.host.Window.Keyboard
-	if kb.HasCtrlOrMeta() && !ed.IsInputFocused() {
-		if kb.KeyDown(hid.KeyboardKeyZ) {
-			if !kb.HasShift() {
-				ed.history.Undo()
-				return
-			} else {
-				ed.history.Redo()
-				return
-			}
-		} else if kb.KeyDown(hid.KeyboardKeyY) {
-			ed.history.Redo()
-			return
-		} else if kb.KeyDown(hid.KeyboardKeyS) {
-			ed.SaveCurrentStage()
-			return
-		}
+	if ed.processActionPaletteShortcut(kb) {
+		return
 	}
-	if kb.KeyDown(hid.KeyboardKeyF5) {
-		if kb.HasCtrlOrMeta() {
-			if kb.HasShift() {
-				ed.BuildAndRun(project.GameBuildModeRelease)
-			} else {
-				ed.BuildAndRun(project.GameBuildModeDebug)
-			}
-		} else {
-			ed.BuildAndRunCurrentStage()
-		}
+	if ed.processActionKeyBindings(kb) {
 		return
 	}
 	if ed.currentWorkspace != nil {
-		processWorkspaceHotkeys(ed, kb)
+		if !ed.stageView.IsFlyCameraInputActive() {
+			processWorkspaceHotkeys(ed, kb)
+		}
 		ed.currentWorkspace.Update(deltaTime)
 	}
+}
+
+func (ed *Editor) updatePowerState(deltaTime float64) {
+	if !ed.settings.UseBatteryRefreshRate {
+		return
+	}
+	if !ed.power.initialized {
+		ed.setFrameRateLimitForPowerStatus(ed.queryAndCachePowerStatus())
+		return
+	}
+	ed.power.pollElapsed += deltaTime
+	if ed.power.pollElapsed < editorPowerPollInterval {
+		return
+	}
+	ed.power.pollElapsed = 0
+	status := ed.queryPowerStatus()
+	if status.Source == ed.power.lastStatus.Source && status.HasBattery == ed.power.lastStatus.HasBattery {
+		ed.power.lastStatus = status
+		return
+	}
+	ed.power.lastStatus = status
+	ed.setFrameRateLimitForPowerStatus(status)
 }
 
 func processWorkspaceHotkeys(ed *Editor, kb *hid.Keyboard) {
