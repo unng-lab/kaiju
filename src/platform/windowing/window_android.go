@@ -20,18 +20,12 @@ import (
 
 /*
 #cgo noescape window_main
-#cgo nocallback window_main
 #cgo noescape window_poll
 #cgo noescape pull_android_window
-#cgo nocallback pull_android_window
 #cgo noescape window_size_mm
-#cgo nocallback window_size_mm
 #cgo noescape window_open_website
-#cgo nocallback window_asset_exists
 #cgo noescape window_asset_exists
-#cgo nocallback window_asset_length
 #cgo noescape window_asset_length
-#cgo nocallback window_asset_read
 #cgo noescape window_asset_read
 #include <stdint.h>
 #include <stdlib.h>

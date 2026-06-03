@@ -189,7 +189,11 @@ func (s *ShaderPipelineDataCompiled) ConstructPipeline(device *GPUDevice, shader
 	pipelines := [1]vk.Pipeline{}
 	if vk.CreateGraphicsPipelines(vk.Device(device.LogicalDevice.handle), vk.PipelineCache(vk.NullHandle), 1, &pipelineInfo, nil, &pipelines[0]) != vulkan_const.Success {
 		success = false
-		slog.Error("Failed to create graphics pipeline")
+		slog.Error("Failed to create graphics pipeline",
+			"shader", shader.data.Name,
+			"vertex", shader.data.Vertex,
+			"fragment", shader.data.Fragment,
+			"subpass", s.GraphicsPipeline.Subpass)
 	} else {
 		device.LogicalDevice.dbg.track(unsafe.Pointer(pipelines[0]))
 	}

@@ -36,13 +36,25 @@ func (g *GPULogicalDevice) setupImpl(inst *GPUApplicationInstance, physicalDevic
 		queueCreateInfos[i].PQueuePriorities = &defaultPriority
 	}
 	deviceFeatures := vk.PhysicalDeviceFeatures{
-		SamplerAnisotropy:  vulkan_const.True,
-		SampleRateShading:  vulkan_const.True,
-		ShaderClipDistance: vulkan_const.True,
-		GeometryShader:     vkGeometryShaderValid,
-		TessellationShader: vulkan_const.True,
-		IndependentBlend:   vulkan_const.True,
 		//TextureCompressionASTC_LDR: vk.True,
+	}
+	if physicalDevice.Features.SamplerAnisotropy {
+		deviceFeatures.SamplerAnisotropy = vulkan_const.True
+	}
+	if physicalDevice.Features.SampleRateShading {
+		deviceFeatures.SampleRateShading = vulkan_const.True
+	}
+	if physicalDevice.Features.ShaderClipDistance {
+		deviceFeatures.ShaderClipDistance = vulkan_const.True
+	}
+	if physicalDevice.Features.GeometryShader && vkGeometryShaderValid == vulkan_const.True {
+		deviceFeatures.GeometryShader = vulkan_const.True
+	}
+	if physicalDevice.Features.TessellationShader {
+		deviceFeatures.TessellationShader = vulkan_const.True
+	}
+	if physicalDevice.Features.IndependentBlend {
+		deviceFeatures.IndependentBlend = vulkan_const.True
 	}
 	if physicalDevice.Features.FillModeNonSolid {
 		deviceFeatures.FillModeNonSolid = vulkan_const.True
@@ -61,7 +73,10 @@ func (g *GPULogicalDevice) setupImpl(inst *GPUApplicationInstance, physicalDevic
 		PQueueCreateInfos:    &queueCreateInfos[:qFamCount][0],
 		QueueCreateInfoCount: uint32(qFamCount),
 		PEnabledFeatures:     &deviceFeatures,
-		PNext:                unsafe.Pointer(&drawFeatures),
+	}
+	if physicalDevice.Properties.ApiVersion >= vulkan_const.ApiVersion11 ||
+		physicalDevice.IsExtensionSupported(vulkan_const.KhrShaderDrawParametersExtensionName) {
+		createInfo.PNext = unsafe.Pointer(&drawFeatures)
 	}
 	createInfo.SetEnabledLayerNames(validationLayers)
 	createInfo.SetEnabledExtensionNames(extensions)
