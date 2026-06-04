@@ -14,12 +14,11 @@ import (
 
 	"kaijuengine.com/editor/editor_overlay/context_menu"
 	"kaijuengine.com/editor/editor_stage_manager"
-	"kaijuengine.com/editor/editor_stage_manager/data_binding_renderer"
 	"kaijuengine.com/engine/assets"
 	"kaijuengine.com/engine/ui"
 	"kaijuengine.com/engine/ui/markup/document"
 	"kaijuengine.com/klib"
-	"kaijuengine.com/matrix"
+	"kaijuengine.com/platform/hid"
 	"kaijuengine.com/platform/profiler/tracing"
 	"kaijuengine.com/platform/windowing"
 	"kaijuengine.com/rendering"
@@ -169,59 +168,12 @@ func (hui *WorkspaceHierarchyUI) deleteContextEntity(entity *editor_stage_manage
 
 func (hui *WorkspaceHierarchyUI) removeEntityFromParent(entity *editor_stage_manager.StageEntity) {
 	defer tracing.NewRegion("WorkspaceHierarchyUI.removeEntityFromParent").End()
-	if entity == nil || entity.IsDeleted() || entity.IsLocked() || entity.Parent == nil {
-		return
-	}
-	hui.workspace.Value().stageView.Manager().SetEntityParent(entity, nil)
+	hui.workspace.Value().RemoveEntityFromParent(entity)
 }
 
 func (hui *WorkspaceHierarchyUI) alignEntityWithView(entity *editor_stage_manager.StageEntity) {
 	defer tracing.NewRegion("WorkspaceHierarchyUI.alignEntityWithView").End()
-	if entity == nil || entity.IsDeleted() || entity.IsLocked() {
-		return
-	}
-	w := hui.workspace.Value()
-	cam := w.Host.PrimaryCamera()
-	position := cam.Position()
-	rotation := viewAlignedRotation(cam.Up(), cam.Forward())
-	posHistory := &detailTransformHistory{
-		entities:      []*editor_stage_manager.StageEntity{entity},
-		transformType: transformHistoryTypePosition,
-		prevValues:    []matrix.Vec3{entity.Transform.Position()},
-	}
-	rotHistory := &detailTransformHistory{
-		entities:      []*editor_stage_manager.StageEntity{entity},
-		transformType: transformHistoryTypeRotation,
-		prevValues:    []matrix.Vec3{entity.Transform.Rotation()},
-	}
-	history := w.ed.History()
-	history.BeginTransaction()
-	defer history.CommitTransaction()
-	entity.Transform.SetWorldPosition(position)
-	entity.Transform.SetWorldRotation(rotation)
-	posHistory.nextValues = []matrix.Vec3{entity.Transform.Position()}
-	rotHistory.nextValues = []matrix.Vec3{entity.Transform.Rotation()}
-	history.Add(posHistory)
-	history.Add(rotHistory)
-	man := w.stageView.Manager()
-	man.RefitBVH(entity)
-	for _, db := range entity.DataBindings() {
-		data_binding_renderer.Updated(db, weak.Make(w.Host), entity)
-	}
-}
-
-func viewAlignedRotation(up, forward matrix.Vec3) matrix.Vec3 {
-	forward = forward.Normal()
-	up = up.Normal()
-	right := matrix.Vec3Cross(up, forward).Normal()
-	up = matrix.Vec3Cross(forward, right).Normal()
-	rot := matrix.Mat4{
-		right.X(), right.Y(), right.Z(), 0,
-		up.X(), up.Y(), up.Z(), 0,
-		forward.X(), forward.Y(), forward.Z(), 0,
-		0, 0, 0, 1,
-	}
-	return rot.ExtractRotation().ToEuler()
+	hui.workspace.Value().AlignEntityWithView(entity)
 }
 
 func (hui *WorkspaceHierarchyUI) selectEntityRange(id string) {
@@ -284,6 +236,86 @@ func (hui *WorkspaceHierarchyUI) hierarchyRows() []*document.Element {
 		collect(hui.entityList.Children[i])
 	}
 	return rows
+}
+
+func (hui *WorkspaceHierarchyUI) updateKeyboardSelection() bool {
+	defer tracing.NewRegion("WorkspaceHierarchyUI.updateKeyboardSelection").End()
+	w := hui.workspace.Value()
+	if w == nil || !elementIsActive(hui.hierarchyArea) {
+		return false
+	}
+	kb := &w.Host.Window.Keyboard
+	if kb.HasModifier() {
+		return false
+	}
+	direction := 0
+	if kb.KeyDown(hid.KeyboardKeyUp) {
+		direction = -1
+	} else if kb.KeyDown(hid.KeyboardKeyDown) {
+		direction = 1
+	}
+	if direction == 0 {
+		return false
+	}
+	man := w.stageView.Manager()
+	if !man.HasSelection() {
+		return false
+	}
+	rows := hui.selectableHierarchyRows()
+	if len(rows) == 0 {
+		return false
+	}
+	selected := man.LastSelected()
+	selectedId := selected.StageData.Description.Id
+	idx := -1
+	for i, row := range rows {
+		if row.Attribute("id") == selectedId {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		if direction > 0 {
+			idx = -1
+		} else {
+			idx = len(rows)
+		}
+	}
+	next := idx + direction
+	if next < 0 || next >= len(rows) {
+		return false
+	}
+	man.SelectEntityById(rows[next].Attribute("id"))
+	return true
+}
+
+func (hui *WorkspaceHierarchyUI) selectableHierarchyRows() []*document.Element {
+	defer tracing.NewRegion("WorkspaceHierarchyUI.selectableHierarchyRows").End()
+	w := hui.workspace.Value()
+	if w == nil {
+		return nil
+	}
+	man := w.stageView.Manager()
+	rows := hui.hierarchyRows()
+	selectable := make([]*document.Element, 0, len(rows))
+	for _, row := range rows {
+		entity, ok := man.EntityById(row.Attribute("id"))
+		if !ok || entity.IsDeleted() || entity.IsLocked() || !hui.hierarchyRowVisible(row) {
+			continue
+		}
+		selectable = append(selectable, row)
+	}
+	return selectable
+}
+
+func (hui *WorkspaceHierarchyUI) hierarchyRowVisible(row *document.Element) bool {
+	for row != nil && row != hui.entityList {
+		if row.UI == nil || !row.UI.IsActive() {
+			return false
+		}
+		row = row.Parent.Value()
+	}
+	return true
 }
 
 func (hui *WorkspaceHierarchyUI) entityToggleChildren(e *document.Element) {

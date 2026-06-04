@@ -85,7 +85,11 @@ func Import(path string, fs *project_file_system.FileSystem, cache *Cache, linke
 	dependencyMap := map[string][]ImportResult{}
 	for i := range proc.Variants {
 		res[i].Category = cat
-		res[i].generateUniqueFileId(fs, filepath.Ext(path))
+		storedExt := filepath.Ext(path)
+		if ext, ok := cat.(storedExtensionNamer); ok {
+			storedExt = ext.StoredExtName(path)
+		}
+		res[i].generateUniqueFileId(fs, storedExt)
 		if useLinkedId && linkedId == "" {
 			linkedId = res[i].Id
 		}
@@ -95,7 +99,6 @@ func Import(path string, fs *project_file_system.FileSystem, cache *Cache, linke
 		if err != nil {
 			return res, err
 		}
-		defer f.Close()
 		defer func() {
 			if err != nil {
 				res[i].failureCleanup(fs)
@@ -109,11 +112,10 @@ func Import(path string, fs *project_file_system.FileSystem, cache *Cache, linke
 			LinkedId: linkedId,
 		}
 		if err = json.NewEncoder(f).Encode(cfg); err != nil {
+			f.Close()
 			return res, err
 		}
-		contentPath := res[i].ContentPath()
-		fs.MkdirAll(filepath.Dir(contentPath.String()), os.ModePerm)
-		if err = fs.WriteFile(contentPath.String(), proc.Variants[i].Data, os.ModePerm); err != nil {
+		if err = f.Close(); err != nil {
 			return res, err
 		}
 		res[i].Dependencies = make([]ImportResult, 0, len(proc.Dependencies))
@@ -123,19 +125,41 @@ func Import(path string, fs *project_file_system.FileSystem, cache *Cache, linke
 			} else {
 				var deps []ImportResult
 				deps, err = Import(proc.Dependencies[j], fs, cache, linkedId)
-				res[i].Dependencies = append(res[i].Dependencies, deps...)
-				dependencyMap[proc.Dependencies[j]] = res[i].Dependencies
 				if err != nil {
 					break
 				}
+				res[i].Dependencies = append(res[i].Dependencies, deps...)
+				dependencyMap[proc.Dependencies[j]] = deps
 			}
 		}
+		if err != nil {
+			return res, err
+		}
 		cache.Index(res[i].ConfigPath().String(), fs)
-		if err = cat.PostImportProcessing(proc, &res[i], fs, cache, linkedId); err != nil {
+		preWriteHandled := false
+		if preWrite, ok := cat.(preWriteImportProcessor); ok {
+			preWriteHandled, err = preWrite.PreWriteImportProcessing(proc, &res[i], fs, cache, linkedId)
+			if err != nil {
+				return res, err
+			}
+		}
+		contentPath := res[i].ContentPath()
+		fs.MkdirAll(filepath.Dir(contentPath.String()), os.ModePerm)
+		if err = fs.WriteFile(contentPath.String(), proc.Variants[i].Data, os.ModePerm); err != nil {
+			return res, err
+		}
+		if !preWriteHandled {
+			err = cat.PostImportProcessing(proc, &res[i], fs, cache, linkedId)
+		}
+		if err != nil {
 			return res, err
 		}
 	}
 	return res, err
+}
+
+type preWriteImportProcessor interface {
+	PreWriteImportProcessing(proc ProcessedImport, res *ImportResult, fs *project_file_system.FileSystem, cache *Cache, linkedId string) (bool, error)
 }
 
 type postReimportProcessor interface {
