@@ -12,6 +12,7 @@ import (
 	"slices"
 	"testing"
 
+	"kaijuengine.com/engine"
 	"kaijuengine.com/engine/graviton"
 	"kaijuengine.com/matrix"
 	"kaijuengine.com/rendering"
@@ -215,6 +216,67 @@ func TestKaijuMeshSetSerializeMultiMesh(t *testing.T) {
 	if first.Key != "left" {
 		t.Fatalf("Deserialize returned key %q, want first/default key left", first.Key)
 	}
+}
+
+func TestReadMeshCachesDeserializedMeshSets(t *testing.T) {
+	ClearReadMeshCache()
+	defer ClearReadMeshCache()
+	set := KaijuMeshSet{
+		Name: "multi",
+		Meshes: []KaijuMesh{
+			{
+				Key:     "left",
+				Name:    "left",
+				Verts:   []rendering.Vertex{{Position: matrix.Vec3{0, 0, 0}}},
+				Indexes: []uint32{0},
+			},
+			{
+				Key:     "right",
+				Name:    "right",
+				Verts:   []rendering.Vertex{{Position: matrix.Vec3{1, 0, 0}}},
+				Indexes: []uint32{0},
+			},
+		},
+	}
+	data, err := set.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &countingAssetDatabase{
+		singleAssetDatabase: singleAssetDatabase{key: "multi.glb", data: data},
+	}
+	host := engine.NewHost("test", nil, db)
+	left, err := ReadMesh("multi.glb#mesh=left", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := ReadMesh("multi.glb#mesh=right", host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left.Key != "left" || right.Key != "right" {
+		t.Fatalf("read keys = %q, %q; want left, right", left.Key, right.Key)
+	}
+	if db.reads != 1 {
+		t.Fatalf("asset reads = %d, want 1", db.reads)
+	}
+	ClearReadMeshCacheForAsset("multi.glb")
+	if _, err := ReadMesh("multi.glb#mesh=left", host); err != nil {
+		t.Fatal(err)
+	}
+	if db.reads != 2 {
+		t.Fatalf("asset reads after invalidation = %d, want 2", db.reads)
+	}
+}
+
+type countingAssetDatabase struct {
+	singleAssetDatabase
+	reads int
+}
+
+func (d *countingAssetDatabase) Read(key string) ([]byte, error) {
+	d.reads++
+	return d.singleAssetDatabase.Read(key)
 }
 
 func TestKaijuMeshSerializeRoundTripSkinAnimation(t *testing.T) {

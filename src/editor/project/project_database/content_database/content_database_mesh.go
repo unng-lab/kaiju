@@ -107,6 +107,8 @@ func writeMeshBVH(km kaiju_mesh.KaijuMesh, path string, fs *project_file_system.
 					}
 					if err = fs.WriteFile(path, serialized, os.ModePerm); err != nil {
 						slog.Error("failed to write the mesh-set BVH", "id", id, "path", path, "error", err)
+					} else {
+						kaiju_mesh.ClearReadMeshCacheForAsset(id)
 					}
 					return
 				}
@@ -120,6 +122,8 @@ func writeMeshBVH(km kaiju_mesh.KaijuMesh, path string, fs *project_file_system.
 	}
 	if err = fs.WriteFile(path, data, os.ModePerm); err != nil {
 		slog.Error("failed to write the mesh BVH", "id", id, "path", path, "error", err)
+	} else {
+		kaiju_mesh.ClearReadMeshCacheForAsset(id)
 	}
 }
 
@@ -128,7 +132,11 @@ func writeMeshTextureURIs(km kaiju_mesh.KaijuMesh, path string, fs *project_file
 	if err != nil {
 		return err
 	}
-	return fs.WriteFile(path, data, os.ModePerm)
+	if err := fs.WriteFile(path, data, os.ModePerm); err != nil {
+		return err
+	}
+	kaiju_mesh.ClearReadMeshCacheForAsset(filepath.Base(path))
+	return nil
 }
 
 func writeMeshSetTextureURIs(set kaiju_mesh.KaijuMeshSet, path string, fs *project_file_system.FileSystem, textureURIs map[string]map[string]string) error {
@@ -136,7 +144,11 @@ func writeMeshSetTextureURIs(set kaiju_mesh.KaijuMeshSet, path string, fs *proje
 	if err != nil {
 		return err
 	}
-	return fs.WriteFile(path, data, os.ModePerm)
+	if err := fs.WriteFile(path, data, os.ModePerm); err != nil {
+		return err
+	}
+	kaiju_mesh.ClearReadMeshCacheForAsset(filepath.Base(path))
+	return nil
 }
 
 func (Mesh) Import(src string, _ *project_file_system.FileSystem) (ProcessedImport, error) {
@@ -774,6 +786,7 @@ func (Mesh) PostReimportProcessing(proc ProcessedImport, res *ImportResult, fs *
 	if err := fs.WriteFile(res.ContentPath().String(), serialized, os.ModePerm); err != nil {
 		return err
 	}
+	kaiju_mesh.ClearReadMeshCacheForAsset(res.Id)
 	cc.Config.Mesh = &MeshConfig{Submeshes: meshConfigSubmeshes(data.set, materials, cc.Config.Mesh)}
 	if err := WriteConfig(cc.Path, cc.Config, fs); err != nil {
 		return err

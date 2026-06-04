@@ -87,6 +87,13 @@ type MeshRef struct {
 	Key   string
 }
 
+type readMeshSetCacheKey struct {
+	host  *engine.Host
+	asset string
+}
+
+var readMeshSetCache sync.Map
+
 // LoadedResultToKaijuMesh will take in a [load_result.Result] and convert every
 // mesh contained within the structure to our built in version known as
 // [KaijuMesh]. This is typically used for the editor, but games/applications
@@ -312,12 +319,7 @@ func meshNodeFromLoadResult(node *load_result.Node) KaijuMeshNode {
 func ReadMesh(ref string, host *engine.Host) (KaijuMesh, error) {
 	defer tracing.NewRegion("kaiju_mesh.ReadMesh").End()
 	meshRef := ParseMeshRef(ref)
-	data, err := host.AssetDatabase().Read(meshRef.Asset)
-	if err != nil {
-		slog.Error("failed to read the mesh", "id", meshRef.Asset, "error", err)
-		return KaijuMesh{}, err
-	}
-	set, err := DeserializeSet(data)
+	set, err := readMeshSet(meshRef.Asset, host)
 	if err != nil {
 		return KaijuMesh{}, err
 	}
@@ -325,6 +327,38 @@ func ReadMesh(ref string, host *engine.Host) (KaijuMesh, error) {
 		return mesh, nil
 	}
 	return KaijuMesh{}, fmt.Errorf("mesh %q not found in %q", meshRef.Key, meshRef.Asset)
+}
+
+func readMeshSet(asset string, host *engine.Host) (KaijuMeshSet, error) {
+	key := readMeshSetCacheKey{host: host, asset: asset}
+	if cached, ok := readMeshSetCache.Load(key); ok {
+		return cached.(KaijuMeshSet), nil
+	}
+	data, err := host.AssetDatabase().Read(asset)
+	if err != nil {
+		slog.Error("failed to read the mesh", "id", asset, "error", err)
+		return KaijuMeshSet{}, err
+	}
+	set, err := DeserializeSet(data)
+	if err != nil {
+		return KaijuMeshSet{}, err
+	}
+	readMeshSetCache.Store(key, set)
+	return set, nil
+}
+
+func ClearReadMeshCache() {
+	readMeshSetCache.Clear()
+}
+
+func ClearReadMeshCacheForAsset(asset string) {
+	readMeshSetCache.Range(func(key, _ any) bool {
+		cacheKey := key.(readMeshSetCacheKey)
+		if cacheKey.asset == asset {
+			readMeshSetCache.Delete(cacheKey)
+		}
+		return true
+	})
 }
 
 func ParseMeshRef(ref string) MeshRef {
